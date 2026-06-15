@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:jwt_decoder/jwt_decoder.dart'; // 🎯 إضافة المكتبة لفحص التوكن
 import '../core/api_service.dart';
 import '../dashboard_screen/employee_dashboard.dart';
 import '../home/home_screen.dart';
@@ -35,13 +36,8 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // الحساب الوهمي للتأكد من التيست السريع
-      if (email == "admin@test.com" && password == "123456") {
-        await _storage.write(key: 'token', value: 'fake_token');
-        if (!mounted) return;
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const EmployeeDashboard()));
-        return;
-      }
+      // 1. تنظيف أي توكن قديم معلق في الجهاز لتفادي مشاكل الكاش
+      await _storage.delete(key: 'token');
 
       final apiService = Provider.of<ApiService>(context, listen: false);
       final response = await apiService.login(email, password);
@@ -51,37 +47,60 @@ class _LoginScreenState extends State<LoginScreen> {
       debugPrint("=================================");
 
       if (response.statusCode == 200) {
-        // استخراج التوكن وحفظه
+        // 2. استخراج التوكن وحفظه في الـ Secure Storage
         final token = (response.data['token'] ?? response.data['accessToken'] ?? response.data['data']?['token'])?.toString();
-        if (token != null) await _storage.write(key: 'token', value: token);
 
-        var responseData = response.data;
-        String role = 'user';
+        if (token != null && token.isNotEmpty) {
+          await _storage.write(key: 'token', value: token);
+          debugPrint("💾 New Token saved successfully!");
 
-        if (responseData is Map) {
-          // 1. فحص لو الـ role مبعوثة مباشرة في الـ Root (زي ما متخزنة في الـ DB عندك)
-          if (responseData.containsKey('role') && responseData['role'] != null) {
-            role = responseData['role'].toString().toLowerCase().trim();
+          String role = 'user';
+          var responseData = response.data;
+
+          // 3. محاولة قراءة الـ role من الـ Response أولاً
+          if (responseData is Map) {
+            if (responseData.containsKey('role') && responseData['role'] != null) {
+              role = responseData['role'].toString().toLowerCase().trim();
+            }
+            else if (responseData['data'] is Map && responseData['data'].containsKey('role') && responseData['data']['role'] != null) {
+              role = responseData['data']['role'].toString().toLowerCase().trim();
+            }
+            else if (responseData['data'] is Map && responseData['data']['user'] is Map && responseData['data']['user'].containsKey('role')) {
+              role = responseData['data']['user']['role'].toString().toLowerCase().trim();
+            }
           }
-          // 2. فحص لو الـ role مبعوثة جوه أوبجكت اسمه data
-          else if (responseData['data'] is Map && responseData['data'].containsKey('role') && responseData['data']['role'] != null) {
-            role = responseData['data']['role'].toString().toLowerCase().trim();
+
+          // 🎯 4. خطوة أمان إضافية: لو الـ role مجاتش من الـ Response، نفك التوكن ونقراها منه
+          if (role == 'user' || role.isEmpty) {
+            try {
+              final decodedToken = JwtDecoder.decode(token);
+              if (decodedToken.containsKey('role') && decodedToken['role'] != null) {
+                role = decodedToken['role'].toString().toLowerCase().trim();
+                debugPrint("👤 Role extracted safely from JWT: $role");
+              }
+            } catch (jwtError) {
+              debugPrint("JWT Decoding Error: $jwtError");
+            }
           }
-          // 3. فحص لو الـ role جوه أوبجكت الـ user اللي جوه الـ data
-          else if (responseData['data'] is Map && responseData['data']['user'] is Map && responseData['data']['user'].containsKey('role')) {
-            role = responseData['data']['user']['role'].toString().toLowerCase().trim();
+
+          debugPrint("🎯 Final Detected Role: $role");
+
+          if (!mounted) return;
+
+          // 5. التوجيه بناءً على الـ Role المشتقة
+          if (role == 'employee' || role == 'admin') {
+            Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const EmployeeDashboard())
+            );
+          } else {
+            Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const HomeScreen())
+            );
           }
-        }
-
-        debugPrint("Detected Role After Fix: $role");
-
-        if (!mounted) return;
-
-        // التوجيه الصحيح للأدمن أو الموظف أو المستخدم
-        if (role == 'employee' || role == 'admin') {
-          Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const EmployeeDashboard()));
         } else {
-          Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const HomeScreen()));
+          throw Exception("Token not found in server response");
         }
       }
     } catch (e) {
@@ -103,7 +122,6 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             children: [
               const SizedBox(height: 50),
-              // اللوجو بشكل Figma
               Center(
                 child: Column(
                   children: [
@@ -122,7 +140,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 40),
 
-              // كارت البيانات (White Card)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(25),
@@ -157,7 +174,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
 
                     const SizedBox(height: 20),
-                    // زرار تسجيل الدخول
                     SizedBox(
                       width: double.infinity, height: 55,
                       child: ElevatedButton(
@@ -178,9 +194,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     _buildDivider(),
                     const SizedBox(height: 25),
 
-                    // أزرار السوشيال ميديا
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisAlignment: MainAxisAlignment.center, // 🎯 تم تصليح السطر ده هنا
                       children: [
                         _socialIcon('https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/1200px-Google_%22G%22_logo.svg.png'),
                         const SizedBox(width: 20),

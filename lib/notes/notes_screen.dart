@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
-import 'save_task.dart'; // تأكدي من استدعاء ملف صفحة السيف تاسك
+import 'package:provider/provider.dart';
+import '../core/employee_api_service.dart';
+import '../models/employee_models.dart';
+import 'save_task.dart';
 
 class NotesScreen extends StatefulWidget {
   const NotesScreen({super.key});
@@ -11,44 +14,82 @@ class NotesScreen extends StatefulWidget {
 class _NotesScreenState extends State<NotesScreen> {
   int selectedDateIndex = 0;
   int _currentNavIndex = 1;
+  bool _isLoading = true;
 
-  final List<Map<String, dynamic>> _tasks = [
-    {
-      "title": "Meeting with Mr. Karim",
-      "subtitle": "Palm Hills Compound • 10:00 AM",
-      "color": const Color(0xFF007BFF),
-      "icon": Icons.location_on
-    },
-    {
-      "title": "Call New Leads (5)",
-      "subtitle": "Follow up on recent requests",
-      "color": const Color(0xFFF59E0B),
-      "icon": Icons.phone
-    },
-  ];
+  // قوائم لتخزين البيانات الديناميكية القادمة من الباك اند (TaskByEmployee)
+  List<TaskByEmployee> _pendingTasks = [];
+  List<TaskByEmployee> _completedTasks = [];
 
-  // --- الدالة الجديدة لفتح صفحة SaveTask واستلام البيانات ---
+  @override
+  void initState() {
+    super.initState();
+    _fetchTasksData();
+  }
+
+  // 🎯 دالة جلب البيانات ديناميكياً من الباك اند (Pending & Completed)
+  Future<void> _fetchTasksData() async {
+    try {
+      if (!mounted) return;
+      setState(() => _isLoading = true);
+
+      final employeeApi = Provider.of<EmployeeApiService>(context, listen: false);
+
+      // استدعاء دالة getTasksByEmployee المخصصة لتقارير الموظف من السيرفر
+      final pendingResult = await employeeApi.getTasksByEmployee(status: 'pending');
+      final completedResult = await employeeApi.getTasksByEmployee(status: 'completed');
+
+      if (mounted) {
+        setState(() {
+          _pendingTasks = pendingResult;
+          _completedTasks = completedResult;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+      debugPrint("🎯 Notes Fetch Error: $e");
+    }
+  }
+
+  // 🎯 الدالة المعدلة بالكامل لفتح صفحة SaveTask وإرسال الـ Request Body المطلوب بالظبط
   void _openSaveTaskScreen() async {
     final result = await Navigator.push(
       context,
       PageRouteBuilder(
-        opaque: false, // عشان نقدر نشوف الخلفية الشفافة
+        opaque: false,
         pageBuilder: (_, __, ___) => const SaveTask(),
       ),
     );
 
-    // لو راجع ببيانات (يعني داس على Save Task)
+    // لو الموظف دخل بيانات وداس Save Task وراجع بـ Map
     if (result != null && result is Map<String, dynamic>) {
-      setState(() {
-        _tasks.add({
-          "title": result['title'],
-          "subtitle": result['subtitle'].toString().isEmpty
-              ? "Today, 18 Oct • 02:30 PM"
-              : result['subtitle'],
-          "color": const Color(0xFF0095FF),
-          "icon": Icons.assignment_outlined,
-        });
-      });
+      try {
+        setState(() => _isLoading = true);
+        final employeeApi = Provider.of<EmployeeApiService>(context, listen: false);
+
+        // حساب الـ taskNo التالي تلقائياً كـ int عشان السيرفر يقبله (نوعه Number بالباك اند)
+        int nextTaskNo = (_pendingTasks.length + _completedTasks.length + 1);
+
+        // 🎯 إرسال البيانات بمطابقة تامة للـ Example Request Body بتاعك
+        await employeeApi.submitTaskByEmployee(
+          employeeId: "664abc123def456789012345", // الـ ID الحقيقي للموظف المسؤول
+          taskNo: nextTaskNo,                     // بيبعت الرقم كـ int صريح (1، 2، 3...)
+          data: result['title'] ?? "Contacted customer and scheduled appointment successfully", // البيانات الأساسية من التكست فيلد
+          notes: result['subtitle'] ?? "Customer is very interested, prefers morning visits",    // الملاحظات الإضافية
+        );
+
+        // بعد الحفظ بنجاح، بنعمل تحديث (Refresh) للداتا ديناميكياً من السيرفر
+        _fetchTasksData();
+
+      } catch (e) {
+        if (mounted) setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Failed to submit task: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -66,39 +107,77 @@ class _NotesScreenState extends State<NotesScreen> {
         ),
         title: const Text("Notes", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 10),
-            const Text("OCTOBER 2026", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
-            const SizedBox(height: 15),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _buildCalendarItem(0, "MON", "18"),
-                _buildCalendarItem(1, "TUE", "19"),
-                _buildCalendarItem(2, "WED", "20"),
-                _buildCalendarItem(3, "THU", "21"),
-              ],
-            ),
-            const SizedBox(height: 30),
-            Text("Today's Plan (${_tasks.length})", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 15),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF007BFF)))
+          : RefreshIndicator(
+        onRefresh: _fetchTasksData, // اسحبي الشاشة لتحت لتحديث البيانات تلقائياً من السيرفر
+        color: const Color(0xFF007BFF),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 10),
+              const Text("JUNE 2026", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 13)),
+              const SizedBox(height: 15),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _buildCalendarItem(0, "MON", "15"),
+                  _buildCalendarItem(1, "TUE", "16"),
+                  _buildCalendarItem(2, "WED", "17"),
+                  _buildCalendarItem(3, "THU", "18"),
+                ],
+              ),
+              const SizedBox(height: 30),
 
-            ..._tasks.map((task) => _buildPlanItem(task["title"], task["subtitle"], task["color"], task["icon"])),
+              // خطة اليوم الديناميكية (Pending Tasks القادمة من الباك اند)
+              Text("Today's Plan (${_pendingTasks.length})", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 15),
 
-            const SizedBox(height: 30),
-            const Text("Completed", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 15),
-            _buildCompletedItem("Send Contract Draft", "Sent to Legal Dept."),
-            const SizedBox(height: 80),
-          ],
+              _pendingTasks.isEmpty
+                  ? const Padding(
+                padding: EdgeInsets.symmetric(vertical: 20),
+                child: Text("No tasks in today's plan 👍", style: TextStyle(color: Colors.grey)),
+              )
+                  : Column(
+                children: _pendingTasks.map((task) {
+                  return _buildPlanItem(
+                      task.data ?? "No Title",
+                      task.notes ?? "No Notes provided",
+                      const Color(0xFF007BFF),
+                      Icons.assignment_outlined
+                  );
+                }).toList(),
+              ),
+
+              const SizedBox(height: 30),
+
+              // قسم التأسكات المكتملة الديناميكي (Completed Tasks)
+              Text("Completed (${_completedTasks.length})", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 15),
+
+              _completedTasks.isEmpty
+                  ? const Padding(
+                padding: EdgeInsets.symmetric(vertical: 10),
+                child: Text("No completed tasks yet", style: TextStyle(color: Colors.grey, fontSize: 13)),
+              )
+                  : Column(
+                children: _completedTasks.map((task) {
+                  return _buildCompletedItem(
+                      task.data ?? "Completed Task",
+                      task.notes ?? "Done"
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 80),
+            ],
+          ),
         ),
       ),
 
-      // الزرار دلوقتي هيفتح اسكرينة الـ SaveTask اللي بعتيها
+      // الزرار الدائري لفتح اسكرينة الـ SaveTask وإضافة نوت جديدة
       floatingActionButton: FloatingActionButton(
         onPressed: _openSaveTaskScreen,
         backgroundColor: const Color(0xFF0095FF),
@@ -124,7 +203,7 @@ class _NotesScreenState extends State<NotesScreen> {
     );
   }
 
-  // الـ Widgets المساعدة (نفس كودك السابق بدون تغيير)
+  // الـ Widgets المساعدة بالتصميم القديم
   Widget _buildCalendarItem(int index, String day, String date) {
     bool isSelected = selectedDateIndex == index;
     return GestureDetector(
@@ -164,6 +243,7 @@ class _NotesScreenState extends State<NotesScreen> {
 
   Widget _buildCompletedItem(String title, String subtitle) {
     return Container(
+      margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(20)),
       child: ListTile(

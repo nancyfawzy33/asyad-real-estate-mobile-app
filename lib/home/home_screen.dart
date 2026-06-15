@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart'; // تمت الإضافة لمسح التوكن عند الخروج
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../core/api_service.dart';
 import '../sign/loginscreen.dart';
 import 'property_details_screen.dart';
-// عملنا import لشاشة الـ Login اللي لسه مخلصينها
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -17,7 +16,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   List _properties = [];
   String _selectedCategory = 'All';
-  final _storage = const FlutterSecureStorage(); // استدعاء الـ Storage
+  final _storage = const FlutterSecureStorage();
 
   @override
   void initState() {
@@ -43,20 +42,21 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // دالة تسجيل الخروج والانتقال لصفحة الـ Login مباشرة مع مسح التوكن
+  // دالة تسجيل الخروج الصحيحة والمؤمنة لتنظيف الـ Storage والتوجيه للـ Login
   Future<void> _handleLogout() async {
-    // 1. مسح التوكن المخزن عشان نأمن الحساب تماماً
+    // 1. مسح التوكن المخزن في ذاكرة الجهاز تماماً عشان ننهي كاش الجلسة السابقة
     await _storage.delete(key: 'token');
+    debugPrint("🧹 Token deleted from FlutterSecureStorage!");
 
     if (!mounted) return;
 
-    // 2. التوجيه لشاشة الـ LoginScreen وتصفير كل الشاشات اللي فاتت
+    // 2. التوجيه لشاشة الـ LoginScreen وتصفير كل الـ Stack عشان نمنع الـ Back
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(
-        builder: (context) => const LoginScreen(), // التوجيه لشاشتك المظبوطة
+        builder: (context) => const LoginScreen(),
       ),
-          (route) => false, // يمنع المستخدم من الرجوع بـ Back للـ Home بعد تسجيل الخروج
+          (route) => false,
     );
   }
 
@@ -89,7 +89,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // 1. الهيدر (المكان، الترحيب، النوتيفيكيشن، وزرار الـ Logout)
+  // 1. الهيدر (المكان، الترحيب، وزرار تسجيل الخروج النظيف)
   Widget _buildHeader() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -114,7 +114,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         Row(
           children: [
-            // زرار الإشعارات
             CircleAvatar(
               backgroundColor: Colors.white,
               radius: 22,
@@ -124,7 +123,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(width: 10),
-            // زرار تسجيل الخروج (Logout) المتجه لشاشة الـ Login
+            // زرار الـ Logout المستدعي للدالة المعدلة
             CircleAvatar(
               backgroundColor: const Color(0xFFFFEBEB),
               radius: 22,
