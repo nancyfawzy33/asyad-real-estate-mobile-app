@@ -1,246 +1,161 @@
-enum TaskStatus { pending, accepted, rejected, completed }
+// ===========================================================
+// employee_models.dart
+// نماذج البيانات الخاصة بالموظف: التاسكات والتقييمات
+// ===========================================================
 
-class EmployeeRef {
-  final String id;
-  final String name;
-  final String email;
-
-  EmployeeRef({required this.id, required this.name, required this.email});
-
-  factory EmployeeRef.fromJson(Map<String, dynamic> json) {
-    return EmployeeRef(
-      id: json['_id'] ?? '',
-      name: json['name'] ?? json['userName'] ?? '',
-      email: json['email'] ?? '',
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    '_id': id,
-    'name': name,
-    'email': email,
-  };
-}
-
-class PropertyRef {
-  final String id;
-  final String title;
-  final String city;
-
-  PropertyRef({required this.id, required this.title, required this.city});
-
-  factory PropertyRef.fromJson(Map<String, dynamic> json) {
-    return PropertyRef(
-      id: json['_id'] ?? '',
-      title: json['title'] ?? json['name'] ?? '',
-      city: json['city'] ?? '',
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    '_id': id,
-    'title': title,
-    'city': city,
-  };
-}
-
-class TaskToEmployee {
-  final String id;
-  final dynamic employee; // String ID or EmployeeRef
-  final dynamic property; // String ID or PropertyRef
-  final String? appointmentId;
-  final String title;
-  final String? description;
-  final TaskStatus status;
-  final DateTime? dueDate;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-
-  TaskToEmployee({
-    required this.id,
-    required this.employee,
-    required this.property,
-    this.appointmentId,
-    required this.title,
-    this.description,
-    required this.status,
-    this.dueDate,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-
-  factory TaskToEmployee.fromJson(Map<String, dynamic> json) {
-    return TaskToEmployee(
-      id: json['_id'] ?? '',
-      employee: json['employeeId'] is Map
-          ? EmployeeRef.fromJson(json['employeeId'])
-          : json['employeeId'],
-      property: json['propertyId'] is Map
-          ? PropertyRef.fromJson(json['propertyId'])
-          : json['propertyId'],
-      appointmentId: json['appointmentId'],
-      title: json['title'] ?? '',
-      description: json['description'],
-      status: _parseStatus(json['status']),
-      dueDate: json['dueDate'] != null ? DateTime.parse(json['dueDate']) : null,
-      createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
-      updatedAt: DateTime.parse(json['updatedAt'] ?? DateTime.now().toIso8601String()),
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    '_id': id,
-    'employeeId': employee is EmployeeRef ? employee.toJson() : employee,
-    'propertyId': property is PropertyRef ? property.toJson() : property,
-    'appointmentId': appointmentId,
-    'title': title,
-    'description': description,
-    'status': status.name,
-    'dueDate': dueDate?.toIso8601String(),
-    'createdAt': createdAt.toIso8601String(),
-    'updatedAt': updatedAt.toIso8601String(),
-  };
-
-  static TaskStatus _parseStatus(String? status) {
-    switch (status?.toLowerCase()) {
-      case 'accepted': return TaskStatus.accepted;
-      case 'rejected': return TaskStatus.rejected;
-      case 'completed': return TaskStatus.completed;
-      default: return TaskStatus.pending;
+/// 🟢 دوال مساعدة مشتركة (تفادي تكرار نفس الكود في كل موديل)
+class ModelHelpers {
+  static DateTime? parseDate(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value.toLocal();
+    try {
+      return DateTime.parse(value.toString()).toLocal();
+    } catch (_) {
+      return null;
     }
   }
+
+  // بيتعامل مع الحالتين: ID كـ String عادي، أو كـ Map فيها $oid (شكل MongoDB الخام)
+  static String resolveId(dynamic value) {
+    if (value == null) return '';
+    if (value is Map) {
+      return (value['\$oid'] ?? value['oid'] ?? '').toString();
+    }
+    return value.toString();
+  }
 }
 
+/// الموديل الأساسي بتاع التاسكات الشخصية (تقارير/ملاحظات الموظف)
+/// ده الموديل اللي فيه الإصلاح المهم: حقل dateTask
 class TaskByEmployee {
   final String id;
-  final dynamic employee;
-  final int taskNo;
-  final String data;
-  final String? notes;
-  final TaskStatus status;
+  final String employeeId;
+  final int? taskNo;
+  final String data; // عنوان التاسك
+  final String notes;
+  final DateTime dateTask; // 🟢 تاريخ التاسك الفعلي (اللي اخترته من الكاليندر)
+  final String status; // pending / completed
   final DateTime createdAt;
-  final DateTime updatedAt;
 
   TaskByEmployee({
     required this.id,
-    required this.employee,
-    required this.taskNo,
+    required this.employeeId,
+    this.taskNo,
     required this.data,
-    this.notes,
+    required this.notes,
+    required this.dateTask,
     required this.status,
     required this.createdAt,
-    required this.updatedAt,
   });
 
   factory TaskByEmployee.fromJson(Map<String, dynamic> json) {
     return TaskByEmployee(
-      id: json['_id'] ?? '',
-      employee: json['employeeId'] is Map
-          ? EmployeeRef.fromJson(json['employeeId'])
-          : json['employeeId'],
-      taskNo: json['taskNo'] ?? 0,
-      data: json['data'] ?? '',
-      notes: json['notes'],
-      status: TaskToEmployee._parseStatus(json['status']),
-      createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
-      updatedAt: DateTime.parse(json['updatedAt'] ?? DateTime.now().toIso8601String()),
+      id: ModelHelpers.resolveId(json['_id'] ?? json['id']),
+      employeeId: ModelHelpers.resolveId(json['employeeId']),
+      taskNo: json['taskNo'] is int
+          ? json['taskNo']
+          : int.tryParse(json['taskNo']?.toString() ?? ''),
+      data: json['data']?.toString() ?? '',
+      notes: json['notes']?.toString() ?? '',
+      // لو السيرفر مرجّعش dateTask لأي سبب (تاسك قديم)، نرجع لـ createdAt كحماية
+      dateTask: ModelHelpers.parseDate(json['dateTask']) ??
+          ModelHelpers.parseDate(json['createdAt']) ??
+          DateTime.now(),
+      status: json['status']?.toString() ?? 'pending',
+      createdAt: ModelHelpers.parseDate(json['createdAt']) ?? DateTime.now(),
     );
   }
 
-  Map<String, dynamic> toJson() => {
-    '_id': id,
-    'employeeId': employee is EmployeeRef ? employee.toJson() : employee,
-    'taskNo': taskNo,
-    'data': data,
-    'notes': notes,
-    'status': status.name,
-    'createdAt': createdAt.toIso8601String(),
-    'updatedAt': updatedAt.toIso8601String(),
-  };
+  Map<String, dynamic> toJson() {
+    return {
+      '_id': id,
+      'employeeId': employeeId,
+      'taskNo': taskNo,
+      'data': data,
+      'notes': notes,
+      'dateTask': dateTask.toIso8601String(),
+      'status': status,
+      'createdAt': createdAt.toIso8601String(),
+    };
+  }
 }
 
+/// الموديل بتاع التاسكات اللي بتتوجه للموظف (من المدير مثلاً)، مرتبطة بعقار/موعد
+class TaskToEmployee {
+  final String id;
+  final String employeeId;
+  final String title;
+  final String propertyId;
+  final String? description;
+  final String? appointmentId;
+  final DateTime? dueDate;
+  final String status;
+  final DateTime createdAt;
+
+  TaskToEmployee({
+    required this.id,
+    required this.employeeId,
+    required this.title,
+    required this.propertyId,
+    this.description,
+    this.appointmentId,
+    this.dueDate,
+    required this.status,
+    required this.createdAt,
+  });
+
+  factory TaskToEmployee.fromJson(Map<String, dynamic> json) {
+    return TaskToEmployee(
+      id: ModelHelpers.resolveId(json['_id'] ?? json['id']),
+      employeeId: ModelHelpers.resolveId(json['employeeId']),
+      title: json['title']?.toString() ?? '',
+      propertyId: ModelHelpers.resolveId(json['propertyId']),
+      description: json['description']?.toString(),
+      appointmentId: json['appointmentId'] != null
+          ? ModelHelpers.resolveId(json['appointmentId'])
+          : null,
+      dueDate: ModelHelpers.parseDate(json['dueDate']),
+      status: json['status']?.toString() ?? 'pending',
+      createdAt: ModelHelpers.parseDate(json['createdAt']) ?? DateTime.now(),
+    );
+  }
+}
+
+/// الموديل بتاع التقييمات
 class Evaluation {
   final String id;
   final String employeeId;
   final int rating;
   final String? comments;
-  final DateTime evaluationDate;
-  final EvaluatorRef? ratingBy;
+  final String? appointmentId;
+  final String? transactionId;
   final DateTime createdAt;
-  final DateTime updatedAt;
 
   Evaluation({
     required this.id,
     required this.employeeId,
     required this.rating,
     this.comments,
-    required this.evaluationDate,
-    this.ratingBy,
+    this.appointmentId,
+    this.transactionId,
     required this.createdAt,
-    required this.updatedAt,
   });
 
   factory Evaluation.fromJson(Map<String, dynamic> json) {
     return Evaluation(
-      id: json['_id'] ?? '',
-      employeeId: json['employeeId'] ?? '',
-      rating: json['rating'] ?? 0,
-      comments: json['comments'],
-      evaluationDate: DateTime.parse(json['evaluationDate'] ?? DateTime.now().toIso8601String()),
-      ratingBy: json['ratingBy'] != null ? EvaluatorRef.fromJson(json['ratingBy']) : null,
-      createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
-      updatedAt: DateTime.parse(json['updatedAt'] ?? DateTime.now().toIso8601String()),
+      id: ModelHelpers.resolveId(json['_id'] ?? json['id']),
+      employeeId: ModelHelpers.resolveId(json['employeeId']),
+      rating: json['rating'] is int
+          ? json['rating']
+          : int.tryParse(json['rating']?.toString() ?? '') ?? 0,
+      comments: json['comments']?.toString(),
+      appointmentId: json['appointmentId'] != null
+          ? ModelHelpers.resolveId(json['appointmentId'])
+          : null,
+      transactionId: json['transactionId'] != null
+          ? ModelHelpers.resolveId(json['transactionId'])
+          : null,
+      createdAt: ModelHelpers.parseDate(json['createdAt']) ?? DateTime.now(),
     );
-  }
-
-  Map<String, dynamic> toJson() => {
-    '_id': id,
-    'employeeId': employeeId,
-    'rating': rating,
-    'comments': comments,
-    'evaluationDate': evaluationDate.toIso8601String(),
-    'ratingBy': ratingBy?.toJson(),
-    'createdAt': createdAt.toIso8601String(),
-    'updatedAt': updatedAt.toIso8601String(),
-  };
-}
-
-class EvaluatorRef {
-  final String id;
-  final String userName;
-  final String email;
-  final String phoneNumber;
-
-  EvaluatorRef({
-    required this.id,
-    required this.userName,
-    required this.email,
-    required this.phoneNumber,
-  });
-
-  factory EvaluatorRef.fromJson(Map<String, dynamic> json) {
-    return EvaluatorRef(
-      id: json['_id'] ?? '',
-      userName: json['userName'] ?? '',
-      email: json['email'] ?? '',
-      phoneNumber: json['phone_number'] ?? '',
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    '_id': id,
-    'userName': userName,
-    'email': email,
-    'phone_number': phoneNumber,
-  };
-}
-
-class ApiError {
-  final String message;
-
-  ApiError({required this.message});
-
-  factory ApiError.fromJson(Map<String, dynamic> json) {
-    return ApiError(message: json['message'] ?? 'Unknown error occurred');
   }
 }

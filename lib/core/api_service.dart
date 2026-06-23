@@ -8,6 +8,10 @@ class ApiService {
     baseUrl: ApiConfig.baseUrl,
     connectTimeout: const Duration(seconds: 15),
     receiveTimeout: const Duration(seconds: 15),
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
   ));
 
   final _storage = const FlutterSecureStorage();
@@ -19,9 +23,24 @@ class ApiService {
         if (token != null && token.isNotEmpty) {
           options.headers['Authorization'] = 'Bearer $token';
         }
+        debugPrint("=== Dio Request ===");
+        debugPrint("URL: ${options.uri}");
+        debugPrint("Method: ${options.method}");
+        debugPrint("Headers: ${options.headers}");
+        debugPrint("Data: ${options.data}");
         return handler.next(options);
       },
+      onResponse: (response, handler) {
+        debugPrint("=== Dio Response ===");
+        debugPrint("Status Code: ${response.statusCode}");
+        debugPrint("Data: ${response.data}");
+        return handler.next(response);
+      },
       onError: (DioException e, handler) async {
+        debugPrint("=== Dio Error ===");
+        debugPrint("Status Code: ${e.response?.statusCode}");
+        debugPrint("Data: ${e.response?.data}");
+        debugPrint("Message: ${e.message}");
         if (e.response?.statusCode == 401) {
           await logout();
         }
@@ -62,10 +81,24 @@ class ApiService {
   Future<Response> removeFromFavorites(String propertyId) => _dio.delete('/favorites/$propertyId');
 
   // --- 5) Appointments ---
-  Future<Response> bookAppointment(Map<String, dynamic> data) => _dio.post('/appointments', data: data);
+  Future<Response> bookAppointment(Map<String, dynamic> data) => _dio.post('/appointments/book', data: data);
   Future<Response> getMyAppointments() => _dio.get('/appointments/me');
+  Future<Response> getAppointmentById(String id) => _dio.get('/appointments/$id');
 
-  // --- 6) Error Handling (الدالة التي كانت مفقودة) ---
+  // --- 6) Payments ---
+  Future<Response> getMyPayments() => _dio.get('/payments/me');
+  Future<Response> makePayment(Map<String, dynamic> data) => _dio.post('/payments', data: data);
+
+  // --- 7) Transactions ---
+  Future<Response> getMyTransactions({int? page, int? limit}) => _dio.get(
+    '/transactions/me',
+    queryParameters: {
+      if (page != null) 'page': page,
+      if (limit != null) 'limit': limit,
+    },
+  );
+
+  // --- 8) Error Handling ---
   String extractErrorMessage(Object error, {String fallback = 'Something went wrong'}) {
     if (error is DioException) {
       final data = error.response?.data;

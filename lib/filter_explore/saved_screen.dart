@@ -1,59 +1,345 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../core/api_service.dart';
+import '../home/property_details_screen.dart';
 
-class SavedScreen extends StatelessWidget {
-  // القائمة تستقبل البيانات من صفحة الـ Home بعد معالجتها
-  final List<Map<String, dynamic>> favoriteItems;
+class SavedScreen extends StatefulWidget {
+  const SavedScreen({super.key});
 
-  const SavedScreen({super.key, required this.favoriteItems});
+  @override
+  State<SavedScreen> createState() => _SavedScreenState();
+}
+
+class _SavedScreenState extends State<SavedScreen> {
+  List _favorites = [];
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchFavorites();
+  }
+
+  Future<void> _fetchFavorites() async {
+    setState(() { _isLoading = true; _errorMessage = null; });
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      final response = await apiService.getMyFavorites();
+
+      if (mounted) {
+        final raw = response.data;
+        List result = [];
+        if (raw is List) {
+          result = raw;
+        } else if (raw is Map) {
+          result = (raw['data'] ?? raw['favorites'] ?? raw['results'] ?? []) as List;
+        }
+
+        // ✅ لو الـ property مش موجودة جوا كل item، نجيب تفاصيلها من الـ API
+        final List enriched = [];
+        for (final item in result) {
+          if (item is Map) {
+            // لو في property object كامل جوا الـ item
+            if (item['property'] != null && item['property'] is Map) {
+              enriched.add(item);
+            } else {
+              // نجيب الـ propertyId ونعمل call منفصل
+              final idRaw = item['propertyId'];
+              final String pid = (idRaw is Map)
+                  ? (idRaw['\$oid'] ?? idRaw['_id'] ?? '').toString()
+                  : idRaw?.toString() ?? '';
+
+              if (pid.isNotEmpty) {
+                try {
+                  final detailRes = await apiService.getPropertyDetails(pid);
+                  final detailData = detailRes.data;
+                  Map<String, dynamic> propertyData = {};
+                  if (detailData is Map && detailData.containsKey('data')) {
+                    propertyData = Map<String, dynamic>.from(detailData['data']);
+                  } else if (detailData is Map) {
+                    propertyData = Map<String, dynamic>.from(detailData);
+                  }
+                  enriched.add({ ...Map<String, dynamic>.from(item), 'property': propertyData });
+                } catch (_) {
+                  enriched.add(item);
+                }
+              } else {
+                enriched.add(item);
+              }
+            }
+          }
+        }
+
+        setState(() { _favorites = enriched; _isLoading = false; });
+      }
+    } catch (e) {
+      debugPrint('❌ Error fetching favorites: $e');
+      if (mounted) setState(() { _isLoading = false; _errorMessage = 'Failed to load saved homes.'; });
+    }
+  }
+
+  Future<void> _removeFromFavorites(String propertyId, int index) async {
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      await apiService.removeFromFavorites(propertyId);
+      setState(() => _favorites.removeAt(index));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Removed from saved'), backgroundColor: Colors.redAccent),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Error removing favorite: $e');
+    }
+  }
+
+  // ✅ نفس طريقة property_details في استخراج الـ image url
+  String _extractImageUrl(Map<String, dynamic> property) {
+    final images = property['images'] as List?;
+    if (images == null || images.isEmpty) return '';
+    final first = images[0];
+    if (first is Map) return first['url']?.toString() ?? '';
+    return first.toString();
+  }
+
+  String _extractPropertyId(Map raw, Map<String, dynamic> property) {
+    final idRaw = raw['propertyId'] ?? property['_id'];
+    if (idRaw is Map) return (idRaw['\$oid'] ?? '').toString();
+    return idRaw?.toString() ?? '';
+  }
+
+  String _formatPrice(dynamic price) {
+    final num p = num.tryParse(price.toString()) ?? 0;
+    if (p >= 1000000) return '${(p / 1000000).toStringAsFixed(1)}M';
+    if (p >= 1000) return '${(p / 1000).toStringAsFixed(0)}K';
+    return p.toString();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC), // لون خلفية هادئ ومريح
+      backgroundColor: const Color(0xFFF8FAFC),
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 10),
-            // --- الهيدر (العنوان وعدد العناصر) ---
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    "Saved Homes",
-                    style: TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E293B),
+            _buildHeader(),
+            Expanded(child: _buildBody()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Text('Saved Homes', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1A1A2E))),
+              SizedBox(height: 4),
+              Text('Your favourite properties', style: TextStyle(fontSize: 13, color: Colors.grey)),
+            ],
+          ),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 8)],
+            ),
+            child: const Icon(Icons.favorite, color: Color(0xFF0095FF), size: 22),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator(color: Color(0xFF0095FF)));
+    }
+    if (_errorMessage != null) {
+      return Center(
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(Icons.error_outline, size: 52, color: Colors.redAccent),
+          const SizedBox(height: 12),
+          Text(_errorMessage!, style: const TextStyle(color: Colors.grey)),
+          const SizedBox(height: 16),
+          ElevatedButton(
+            onPressed: _fetchFavorites,
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0095FF)),
+            child: const Text('Retry', style: TextStyle(color: Colors.white)),
+          ),
+        ]),
+      );
+    }
+    if (_favorites.isEmpty) {
+      return Center(
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0095FF).withOpacity(0.08),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.favorite_border, size: 52, color: Color(0xFF0095FF)),
+          ),
+          const SizedBox(height: 20),
+          const Text('No saved homes yet', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1A1A2E))),
+          const SizedBox(height: 8),
+          const Text('Properties you save will appear here', style: TextStyle(fontSize: 13, color: Colors.grey)),
+        ]),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _fetchFavorites,
+      color: const Color(0xFF0095FF),
+      child: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+        itemCount: _favorites.length,
+        itemBuilder: (context, index) => _buildFavoriteCard(index),
+      ),
+    );
+  }
+
+  Widget _buildFavoriteCard(int index) {
+    final raw = _favorites[index] as Map;
+
+    // ✅ نفس logic الـ property_details في استخراج الداتا
+    final Map<String, dynamic> property = raw['property'] != null
+        ? Map<String, dynamic>.from(raw['property'])
+        : Map<String, dynamic>.from(raw);
+
+    final String name = property['name']?.toString() ?? 'Property';
+    final dynamic price = property['price'];
+    final dynamic beds = property['bedrooms'] ?? property['beds'];
+    final dynamic baths = property['bathrooms'] ?? property['baths'];
+    final details = property['details'] as Map?;
+    final dynamic area = details?['area'] ?? property['area'] ?? property['size'];
+
+    // ✅ location زي الـ property_details بالظبط
+    final locationMap = property['location'];
+    final String location = locationMap is Map
+        ? '${locationMap['city'] ?? ''}, ${locationMap['address'] ?? ''}'.trim().replaceAll(RegExp(r'^,\s*|,\s*$'), '')
+        : property['location']?.toString() ?? property['address']?.toString() ?? 'Cairo, Egypt';
+
+    // ✅ image url زي الـ property_details بالظبط
+    final String imageUrl = _extractImageUrl(property);
+    final String propertyId = _extractPropertyId(raw, property);
+
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => PropertyDetailsScreen(propertyId: propertyId)),
+      ),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.07), blurRadius: 12, offset: const Offset(0, 4))],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Image ──
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                  child: imageUrl.isNotEmpty
+                      ? Image.network(
+                    imageUrl,
+                    height: 180,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    // ✅ نفس error handling الـ property_details
+                    errorBuilder: (_, __, ___) => _imagePlaceholder(),
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return Container(
+                        height: 180,
+                        color: Colors.grey.shade100,
+                        child: const Center(child: CircularProgressIndicator(color: Color(0xFF0095FF), strokeWidth: 2)),
+                      );
+                    },
+                  )
+                      : _imagePlaceholder(),
+                ),
+                // Price badge
+                if (price != null)
+                  Positioned(
+                    top: 12, left: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(color: const Color(0xFF0095FF), borderRadius: BorderRadius.circular(8)),
+                      child: Text('EGP ${_formatPrice(price)}',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
                     ),
                   ),
-                  if (favoriteItems.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        "${favoriteItems.length} items",
-                        style: const TextStyle(
-                          color: Color(0xFF007BFF),
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                // Remove from favorites
+                Positioned(
+                  top: 12, right: 12,
+                  child: GestureDetector(
+                    onTap: () => _removeFromFavorites(propertyId, index),
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                      child: const Icon(Icons.favorite, color: Colors.red, size: 18),
                     ),
+                  ),
+                ),
+              ],
+            ),
+            // ── Info ──
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(name,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1A1A2E)),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    const Icon(Icons.location_on, size: 13, color: Color(0xFF0095FF)),
+                    const SizedBox(width: 3),
+                    Expanded(
+                      child: Text(location,
+                          style: const TextStyle(fontSize: 12, color: Colors.grey),
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                  ]),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    if (beds != null) ...[
+                      const Icon(Icons.bed_outlined, size: 14, color: Colors.grey),
+                      const SizedBox(width: 4),
+                      Text('$beds Beds', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    ],
+                    if (baths != null) ...[
+                      const SizedBox(width: 16),
+                      const Icon(Icons.bathtub_outlined, size: 14, color: Colors.grey),
+                      const SizedBox(width: 4),
+                      Text('$baths Baths', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    ],
+                    if (area != null) ...[
+                      const SizedBox(width: 16),
+                      const Icon(Icons.square_foot, size: 14, color: Colors.grey),
+                      const SizedBox(width: 4),
+                      Text('$area m²', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    ],
+                  ]),
                 ],
               ),
-            ),
-
-            // --- محتوى الصفحة ---
-            Expanded(
-              child: favoriteItems.isEmpty
-                  ? _buildEmptyState() // لو القائمة فاضية
-                  : _buildSavedList(),  // لو فيها عقارات
             ),
           ],
         ),
@@ -61,189 +347,12 @@ class SavedScreen extends StatelessWidget {
     );
   }
 
-  // ✅ 1. تصميم الحالة الفاضية
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(35),
-            decoration: BoxDecoration(
-              color: Colors.red.withOpacity(0.05),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              Icons.favorite_rounded,
-              size: 80,
-              color: Colors.red.withOpacity(0.4),
-            ),
-          ),
-          const SizedBox(height: 30),
-          const Text(
-            "No Saved Items",
-            style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1E293B),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            "You haven't liked any properties yet.\nStart exploring now!",
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.grey[500],
-              fontSize: 16,
-              height: 1.5,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ✅ 2. تصميم قائمة العقارات (متوافق مع السكيما الجديدة)
-  Widget _buildSavedList() {
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      physics: const BouncingScrollPhysics(),
-      itemCount: favoriteItems.length,
-      itemBuilder: (context, index) {
-        final item = favoriteItems[index];
-        final String imageUrl = item['imageUrl'] ?? '';
-
-        return Container(
-          margin: const EdgeInsets.only(bottom: 25),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(25),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.03),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
-              )
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // جزء الصورة والـ Badges
-              Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(25),
-                    child: imageUrl.startsWith('http')
-                        ? Image.network(
-                      imageUrl,
-                      height: 220,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        height: 220,
-                        color: Colors.grey[200],
-                        child: const Icon(Icons.broken_image, size: 50, color: Colors.grey),
-                      ),
-                    )
-                        : Container(
-                      height: 220,
-                      color: Colors.grey[200],
-                      child: const Icon(Icons.image, size: 50, color: Colors.grey),
-                    ),
-                  ),
-                  // سعر العقار
-                  Positioned(
-                    top: 15,
-                    left: 15,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(15),
-                        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 5)],
-                      ),
-                      child: Text(
-                        item['price'],
-                        style: const TextStyle(
-                          color: Color(0xFF007BFF),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                        ),
-                      ),
-                    ),
-                  ),
-                  // زرار المفضلات (ثابت لأنه في صفحة المحفوظات)
-                  const Positioned(
-                    top: 15,
-                    right: 15,
-                    child: CircleAvatar(
-                      backgroundColor: Colors.white,
-                      radius: 20,
-                      child: Icon(Icons.favorite, color: Colors.red, size: 20),
-                    ),
-                  ),
-                ],
-              ),
-
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item['title'], // تم ربطه بـ name في الـ Home
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1E293B),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        const Icon(Icons.location_on_outlined, size: 16, color: Colors.grey),
-                        const SizedBox(width: 4),
-                        Text(
-                          item['location'],
-                          style: TextStyle(color: Colors.grey[600], fontSize: 14),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 18),
-                    // أيقونات المرافق من الـ details
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _infoRow(Icons.king_bed_outlined, "${item['beds']} Beds"),
-                        _infoRow(Icons.shower_outlined, "${item['baths']} Baths"),
-                        _infoRow(Icons.square_foot_rounded, item['size']),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _infoRow(IconData icon, String label) {
-    return Row(
-      children: [
-        Icon(icon, size: 20, color: const Color(0xFF64748B)),
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: const TextStyle(
-            color: Color(0xFF64748B),
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
+  Widget _imagePlaceholder() {
+    return Container(
+      height: 180,
+      width: double.infinity,
+      color: Colors.grey.shade100,
+      child: const Icon(Icons.home, size: 60, color: Colors.grey),
     );
   }
 }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:dio/dio.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../core/api_service.dart';
 import 'appointment_confirmed_screen.dart';
 
@@ -17,35 +19,43 @@ class _BookViewingScreenState extends State<BookViewingScreen> {
   bool _isBooking = false;
   final TextEditingController _notesController = TextEditingController();
 
-  // توليد قائمة بـ 7 أيام قادمة ابتداءً من الغد
   final List<DateTime> availableDates = List.generate(7, (index) => DateTime.now().add(Duration(days: index + 1)));
-
   final List<String> times = ["10:00 AM", "11:30 AM", "02:00 PM", "04:30 PM", "06:00 PM"];
+  final _storage = const FlutterSecureStorage();
 
   Future<void> _handleBooking() async {
     setState(() => _isBooking = true);
+
+    // ✅ TEST: أول حاجة نعمل Snackbar عشان نتأكد إنها شغالة
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("🟢 TEST: Snackbar is working!"),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+
     try {
       final apiService = Provider.of<ApiService>(context, listen: false);
 
       final selectedDate = availableDates[selectedDateIndex];
       final timeStr = times[selectedTimeIndex];
 
-      // معالجة فائقة الأمان لتحويل الوقت وتجنب الـ String/int index type error
       int hour = 12;
       int minute = 0;
 
       try {
-        final cleanedTimeStr = timeStr.trim().replaceAll(RegExp(r'\s+'), ' '); // تنظيف المسافات الزائدة
+        final cleanedTimeStr = timeStr.trim().replaceAll(RegExp(r'\s+'), ' ');
         final parts = cleanedTimeStr.split(' ');
         if (parts.length >= 2) {
           final timeParts = parts[0].split(':');
           if (timeParts.length >= 2) {
             hour = int.tryParse(timeParts[0]) ?? 12;
             minute = int.tryParse(timeParts[1]) ?? 0;
-
             final isPM = parts[1].toUpperCase().contains('PM');
             final isAM = parts[1].toUpperCase().contains('AM');
-
             if (isPM && hour < 12) hour += 12;
             if (isAM && hour == 12) hour = 0;
           }
@@ -55,30 +65,73 @@ class _BookViewingScreenState extends State<BookViewingScreen> {
       }
 
       final startTime = DateTime(selectedDate.year, selectedDate.month, selectedDate.day, hour, minute);
-      final endTime = startTime.add(const Duration(hours: 1)); // الحجز مدته ساعة ديفولت
+      final endTime = startTime.add(const Duration(hours: 1));
 
-      // إرسال الطلب للسيرفر
-      final response = await apiService.bookAppointment({
-        "propertyId": widget.propertyId,
-        "startTime": startTime.toIso8601String(),
-        "endTime": endTime.toIso8601String(),
-        "notes": _notesController.text.trim(),
-      });
+      print("=== Sending Booking Request ===");
+      print("Property ID: ${widget.propertyId}");
+      print("Start Time: ${startTime.toIso8601String()}");
+      print("End Time: ${endTime.toIso8601String()}");
+      print("Notes: ${_notesController.text.trim()}");
 
-      if (response.statusCode == 201 || response.statusCode == 200) {
+      final token = await _storage.read(key: 'token');
+
+      if (token == null || token.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("⚠️ Please login first!"),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+        setState(() => _isBooking = false);
+        return;
+      }
+
+      print("Token found: ${token.substring(0, 10)}...");
+
+      // ✅ هنتجاهل الـ API حالياً ونروح للشاشة مباشرة عشان نختبر
+      // final response = await apiService.bookAppointment({
+      //   "propertyId": widget.propertyId,
+      //   "startTime": startTime.toIso8601String(),
+      //   "endTime": endTime.toIso8601String(),
+      //   "notes": _notesController.text.trim(),
+      // });
+
+      // ✅ TEST: نتجاهل الـ API ونروح للشاشة مباشرة
+      await Future.delayed(const Duration(seconds: 1)); // محاكاة تأخير
+
+      if (mounted) {
+        // ✅ Snackbar نجاح
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("✅ TEST: Appointment booked successfully!"),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+
+        await Future.delayed(const Duration(milliseconds: 500));
+
         if (!mounted) return;
-        Navigator.pop(context); // إغلاق الـ Bottom Sheet
-
-        // الانتقال لشاشة النجاح
-        Navigator.push(
+        Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => const AppointmentConfirmedScreen()),
         );
       }
-    } catch (e) {
+
+    } catch (e, stackTrace) {
+      print("❌ EXCEPTION: $e");
+      print("StackTrace: $stackTrace");
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Failed to book appointment. Please try again.")),
+          SnackBar(
+            content: Text("❌ Error: ${e.toString()}"),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
         );
       }
     } finally {

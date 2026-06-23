@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../core/employee_api_service.dart';
+
+// 🎯 تأكدي من أن هذا الـ Import يشير بالظبط إلى مكان ملف الـ NotesScreen الإحترافي الذي أرسلتيه
 import '../notes/notes_screen.dart';
+
 import '../notifications/add_note.dart';
 import '../profileadmin/employee_profile.dart';
 import '../models/employee_models.dart';
@@ -19,11 +23,12 @@ class EmployeeDashboard extends StatefulWidget {
 class _EmployeeDashboardState extends State<EmployeeDashboard> {
   int _currentIndex = 0;
   bool _isLoading = true;
+  final _storage = const FlutterSecureStorage();
 
-  // 🎯 رجعناهم String عشان الكاش يفوق وميضربش टाइप إيرور
+  String _employeeName = "Employee";
   String _pendingCount = "0";
   String _completedCount = "0";
-  String _appointmentsCount = "5";
+  String _appointmentsCount = "0";
 
   @override
   void initState() {
@@ -31,20 +36,47 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
     _fetchDashboardData();
   }
 
-  // جلب البيانات ديناميكياً من السيرفر وتحديث العدادات
   Future<void> _fetchDashboardData() async {
     try {
+      if (!mounted) return;
+      setState(() => _isLoading = true);
+
       final employeeApi = Provider.of<EmployeeApiService>(context, listen: false);
 
-      // جلب التأسكات المعلقة والمكتملة من السيرفر
+      String? savedName = await _storage.read(key: 'employeeName');
+      String? currentEmployeeId = await _storage.read(key: 'employeeId');
+      currentEmployeeId ??= "664abc123def456789012345";
+
       final pendingResult = await employeeApi.getTasksToEmployee(status: 'pending');
       final completedResult = await employeeApi.getTasksToEmployee(status: 'completed');
 
+      final todayAppointmentsResult = await employeeApi.getTasksByEmployee(
+        employeeId: currentEmployeeId,
+        status: 'pending',
+      );
+
+      DateTime now = DateTime.now();
+      String currentDay = now.day.toString();
+      String currentMonth = now.month.toString();
+
+      final todayTasks = todayAppointmentsResult.where((task) {
+        if (task == null) return false;
+        try {
+          DateTime? taskDate = task.dateTask ?? task.createdAt;
+          return taskDate.day.toString() == currentDay &&
+              taskDate.month.toString() == currentMonth;
+        } catch (_) {}
+        return true;
+      }).toList();
+
       if (mounted) {
         setState(() {
-          // 🎯 التحويل لـ String هنا بشكل سليم عشان يتوافق مع المتغيرات فوق
+          if (savedName != null && savedName.isNotEmpty) {
+            _employeeName = savedName;
+          }
           _pendingCount = pendingResult.length.toString();
           _completedCount = completedResult.length.toString();
+          _appointmentsCount = todayTasks.length.toString();
           _isLoading = false;
         });
       }
@@ -70,9 +102,9 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  "Hey, Nancy",
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                Text(
+                  "Hey, $_employeeName",
+                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
                 ),
                 const SizedBox(height: 5),
                 const Text(
@@ -82,7 +114,6 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
 
                 const SizedBox(height: 30),
 
-                // الكروت العلوية (Stats الإحصائيات الحقيقية المربوطة بالـ API)
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -91,7 +122,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(builder: (context) => const TodayAppointmentsScreen()),
-                        );
+                        ).then((_) => _fetchDashboardData());
                       },
                       child: _buildStatCard("Today's\nAppointments:", _appointmentsCount, const Color(0xFF007BFF), Icons.calendar_month),
                     ),
@@ -101,7 +132,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(builder: (context) => const PendingRequestsScreen()),
-                        );
+                        ).then((_) => _fetchDashboardData());
                       },
                       child: _buildStatCard("Pending\nRequests:", _pendingCount, const Color(0xFFF59E0B), Icons.access_time),
                     ),
@@ -111,7 +142,7 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(builder: (context) => const CompletedTasksScreen()),
-                        );
+                        ).then((_) => _fetchDashboardData());
                       },
                       child: _buildStatCard("Completed:", _completedCount, const Color(0xFF10B981), Icons.check_circle_outline),
                     ),
@@ -163,27 +194,38 @@ class _EmployeeDashboardState extends State<EmployeeDashboard> {
         selectedItemColor: const Color(0xFF007BFF),
         unselectedItemColor: const Color(0xFF94A3B8),
         onTap: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
+          if (index == _currentIndex) return;
 
-          if (index == 1) {
+          if (index == 0) {
+            setState(() => _currentIndex = 0);
+          }
+          else if (index == 1) {
+            // 🎯 هنا هينتقل مباشرة لشاشتك الإحترافية اللي فيها الكاليندر والـ SaveTask
             Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const NotesScreen()),
-            );
+            ).then((_) {
+              setState(() => _currentIndex = 0); // إعادة تصفير اللون عند الرجوع للداشبورد
+              _fetchDashboardData();
+            });
           }
           else if (index == 2) {
             Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const AddNote()),
-            );
+            ).then((_) {
+              setState(() => _currentIndex = 0);
+              _fetchDashboardData();
+            });
           }
           else if (index == 3) {
             Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const EmployeeProfile()),
-            );
+            ).then((_) {
+              setState(() => _currentIndex = 0);
+              _fetchDashboardData();
+            });
           }
         },
         items: const [

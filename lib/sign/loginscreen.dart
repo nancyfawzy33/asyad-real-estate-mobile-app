@@ -89,6 +89,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
           // 5. التوجيه بناءً على الـ Role المشتقة
           if (role == 'employee' || role == 'admin') {
+            _emailController.clear();
+            _passwordController.clear();
             Navigator.pushReplacement(
                 context,
                 MaterialPageRoute(builder: (context) => const EmployeeDashboard())
@@ -111,6 +113,12 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -219,22 +227,74 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Widget _fieldLabel(String label) => Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)));
 
-  Widget _buildTextField(TextEditingController controller, String hint, bool isPassword) {
+  Widget _buildTextField(
+      TextEditingController controller,
+      String hint,
+      bool isPassword,
+      ) {
     return TextField(
       controller: controller,
       obscureText: isPassword ? _obscurePassword : false,
-      style: const TextStyle(fontSize: 15, color: Color(0xFF1A1E25)),
+
+      onChanged: (_) {
+        setState(() {});
+      },
+
+      style: const TextStyle(
+        fontSize: 15,
+        color: Color(0xFF1A1E25),
+      ),
+
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: const TextStyle(color: Colors.grey, fontSize: 14),
-        filled: true, fillColor: const Color(0xFFFBFBFB),
-        suffixIcon: isPassword ? GestureDetector(onTap: () => setState(() => _obscurePassword = !_obscurePassword), child: Padding(padding: const EdgeInsets.all(14), child: Text(_obscurePassword ? "Show" : "Hide", style: const TextStyle(color: Color(0xFF0095FF), fontWeight: FontWeight.bold, fontSize: 12)))) : null,
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Color(0xFFF0F0F0))),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: const BorderSide(color: Color(0xFF0095FF))),
+        hintStyle: const TextStyle(
+          color: Colors.grey,
+          fontSize: 14,
+        ),
+
+        filled: true,
+        fillColor: const Color(0xFFFBFBFB),
+
+        suffixIcon: isPassword
+            ? IconButton(
+          onPressed: () {
+            setState(() {
+              _obscurePassword = !_obscurePassword;
+            });
+          },
+          icon: Icon(
+            _obscurePassword
+                ? Icons.visibility_off
+                : Icons.visibility,
+            color: const Color(0xFF0095FF),
+          ),
+        )
+            : controller.text.isNotEmpty
+            ? IconButton(
+          icon: const Icon(Icons.clear),
+          onPressed: () {
+            controller.clear();
+            setState(() {});
+          },
+        )
+            : null,
+
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(15),
+          borderSide: const BorderSide(
+            color: Color(0xFFF0F0F0),
+          ),
+        ),
+
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(15),
+          borderSide: const BorderSide(
+            color: Color(0xFF0095FF),
+          ),
+        ),
       ),
     );
   }
-
   Widget _buildDivider() {
     return Row(
       children: [

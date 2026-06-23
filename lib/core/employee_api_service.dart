@@ -8,7 +8,6 @@ class EmployeeApiService {
   static final EmployeeApiService _instance = EmployeeApiService._internal();
   factory EmployeeApiService() => _instance;
 
-  // 🎯 شيلنا الـ (_) عشان تبقا public ونقدر نستخدمها في الـ Provider
   final Dio dio = Dio(BaseOptions(
     baseUrl: ApiConfig.baseUrl,
     connectTimeout: const Duration(seconds: 15),
@@ -37,7 +36,7 @@ class EmployeeApiService {
     if (e.response != null && e.response?.data != null) {
       final data = e.response?.data;
       if (data is Map<String, dynamic> && data.containsKey('message')) {
-        message = data['message'];
+        message = data['message'].toString();
       }
     } else {
       switch (e.type) {
@@ -60,10 +59,12 @@ class EmployeeApiService {
           message = "Network connection issue";
       }
     }
-    return e.copyWith(error: ApiException(message, statusCode: e.response?.statusCode));
+    return e.copyWith(
+        error: ApiException(message, statusCode: e.response?.statusCode));
   }
 
-  Future<T> _request<T>(Future<Response> Function() call, T Function(dynamic data) mapper) async {
+  Future<T> _request<T>(
+      Future<Response> Function() call, T Function(dynamic data) mapper) async {
     try {
       final response = await call();
       return mapper(response.data);
@@ -77,7 +78,9 @@ class EmployeeApiService {
     }
   }
 
-  // --- 1. Tasks To Employees ---
+  // ============================================================
+  // 1. Tasks To Employees (تاسكات موجهة من المدير، مرتبطة بعقار/موعد)
+  // ============================================================
 
   Future<TaskToEmployee> createTaskToEmployee({
     required String employeeId,
@@ -96,70 +99,109 @@ class EmployeeApiService {
         'appointmentId': appointmentId,
         'dueDate': dueDate?.toIso8601String(),
       }),
-          (data) => TaskToEmployee.fromJson(data['task'] ?? data),
+          (data) => TaskToEmployee.fromJson(data['data'] ?? data['task'] ?? data),
     );
   }
 
-  Future<List<TaskToEmployee>> getTasksToEmployee({String? employeeId, String? status}) {
+  Future<List<TaskToEmployee>> getTasksToEmployee(
+      {String? employeeId, String? status}) {
     return _request(
           () => dio.get('/tasks-to-employees', queryParameters: {
         if (employeeId != null) 'employeeId': employeeId,
         if (status != null) 'status': status,
       }),
           (data) {
-        final list = data is Map ? (data['tasks'] ?? data['data'] ?? []) : data;
-        return (list as List).map((item) => TaskToEmployee.fromJson(item)).toList();
+        final list = data is Map ? (data['data'] ?? data['tasks'] ?? []) : data;
+        return (list as List)
+            .map((item) => TaskToEmployee.fromJson(item))
+            .toList();
       },
     );
   }
 
-  Future<TaskToEmployee> updateTaskToEmployee(String id, Map<String, dynamic> fields) {
+  Future<TaskToEmployee> updateTaskToEmployee(
+      String id, Map<String, dynamic> fields) {
     return _request(
           () => dio.patch('/tasks-to-employees/$id', data: fields),
-          (data) => TaskToEmployee.fromJson(data['task'] ?? data),
+          (data) => TaskToEmployee.fromJson(data['data'] ?? data['task'] ?? data),
     );
   }
 
-  // --- 2. Tasks By Employees (الخاص بالتقارير والنوتس) ---
+  // ============================================================
+  // 2. Tasks By Employees (تقارير/ملاحظات الموظف اليومية)
+  // ============================================================
 
+  /// 🟢 إنشاء تاسك جديد، مربوط بيوم محدد (dateTask)
+  /// ملحوظة: الاسم لازم يكون "dateTask" بالضبط عشان يطابق الباك إند
   Future<TaskByEmployee> submitTaskByEmployee({
     required String employeeId,
     required int taskNo,
     required String data,
     String? notes,
+    required DateTime dateTask,
   }) {
     return _request(
-          () => dio.post('/tasks-by-employees', data: {
-        'employeeId': employeeId,
-        'taskNo': taskNo,
-        'data': data,
-        'notes': notes,
-      }),
-          (data) => TaskByEmployee.fromJson(data['task'] ?? data),
+          () => dio.post(
+        '/tasks-by-employees',
+        data: {
+          'employeeId': employeeId,
+          'taskNo': taskNo,
+          'data': data,
+          'notes': notes,
+          'dateTask': dateTask.toIso8601String(), // 🔴 لازم يطابق اسم الحقل في الباك إند
+        },
+      ),
+          (data) => TaskByEmployee.fromJson(data['data'] ?? data['task'] ?? data),
     );
   }
 
-  Future<List<TaskByEmployee>> getTasksByEmployee({String? employeeId, String? status}) {
+  /// 🟢 تعديل تاسك موجود (العنوان / الملاحظات / التاريخ / الحالة)
+  Future<TaskByEmployee> updateTaskByEmployee(
+      String id, Map<String, dynamic> fields) {
+    // لو فيه dateTask جوه fields وكانت لسه DateTime، حوّلها لـ ISO string قبل البعت
+    final payload = Map<String, dynamic>.from(fields);
+    if (payload['dateTask'] is DateTime) {
+      payload['dateTask'] = (payload['dateTask'] as DateTime).toIso8601String();
+    }
+
+    return _request(
+          () => dio.patch('/tasks-by-employees/$id', data: payload),
+          (data) => TaskByEmployee.fromJson(data['data'] ?? data['task'] ?? data),
+    );
+  }
+
+  /// 🟢 جلب التاسكات، مع فلترة اختيارية بالحالة و/أو يوم محدد
+  Future<List<TaskByEmployee>> getTasksByEmployee({
+    String? employeeId,
+    String? status,
+    DateTime? dateTask,
+  }) {
     return _request(
           () => dio.get('/tasks-by-employees', queryParameters: {
         if (employeeId != null) 'employeeId': employeeId,
         if (status != null) 'status': status,
+        if (dateTask != null) 'dateTask': dateTask.toIso8601String(),
       }),
           (data) {
-        final list = data is Map ? (data['tasks'] ?? data['data'] ?? []) : data;
-        return (list as List).map((item) => TaskByEmployee.fromJson(item)).toList();
+        final list = data is Map ? (data['data'] ?? data['tasks'] ?? []) : data;
+        return (list as List)
+            .map((item) => TaskByEmployee.fromJson(item))
+            .toList();
       },
     );
   }
 
-  Future<TaskByEmployee> updateTaskByEmployee(String id, Map<String, dynamic> fields) {
+  /// 🆕 حذف تاسك (لو احتجت الميزة دي مستقبلاً)
+  Future<void> deleteTaskByEmployee(String id) {
     return _request(
-          () => dio.patch('/tasks-by-employees/$id', data: fields),
-          (data) => TaskByEmployee.fromJson(data['task'] ?? data),
+          () => dio.delete('/tasks-by-employees/$id'),
+          (_) => null,
     );
   }
 
-  // --- 3. Evaluations ---
+  // ============================================================
+  // 3. Evaluations
+  // ============================================================
 
   Future<Evaluation> createEvaluation({
     required String employeeId,
@@ -176,7 +218,7 @@ class EmployeeApiService {
         'appointmentId': appointmentId,
         'transactionId': transactionId,
       }),
-          (data) => Evaluation.fromJson(data['evaluation'] ?? data),
+          (data) => Evaluation.fromJson(data['data'] ?? data['evaluation'] ?? data),
     );
   }
 
@@ -186,7 +228,8 @@ class EmployeeApiService {
         if (employeeId != null) 'employeeId': employeeId,
       }),
           (data) {
-        final list = data is Map ? (data['evaluations'] ?? data['data'] ?? []) : data;
+        final list =
+        data is Map ? (data['data'] ?? data['evaluations'] ?? []) : data;
         return (list as List).map((item) => Evaluation.fromJson(item)).toList();
       },
     );
